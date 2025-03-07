@@ -1,5 +1,11 @@
 FROM python:3.12-slim
 
+RUN apt-get -y update && apt-get -y install git
+
+WORKDIR /git_clone_directory
+
+RUN git clone https://github.com/Bilpapster/stream-DaQ.git && mv stream-DaQ/ /app/ && cd /app/ && git checkout 3da85c1cb468651f09cc49779152a6ed7eb2d7cf
+
 WORKDIR /app
 
 COPY requirements/requirements_daq.txt ./requirements.txt
@@ -11,10 +17,9 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pathway/ .
+WORKDIR /app/pathway
 
-# Create directory for persisting the results (see also volume in docker-compose.yaml)
-CMD mkdir ./data && touch ./data/executionResults.csv
+COPY scalability_experiment* .
 
 CMD ["/bin/sh", "-c", "\
     echo The value of STREAM environment variable is: $STREAM; \

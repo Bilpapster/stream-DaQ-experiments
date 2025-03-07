@@ -133,8 +133,8 @@ services:
       - MEMORY_LIMIT=${MEMORY_LIMIT}
     env_file:
       - .env
-    volumes:
-      - ./execution-results/stream-daq:/app/data
+    # volumes:
+    #   - ./execution-results/stream-daq:/app/data
     deploy:
       resources:
         limits:
@@ -154,6 +154,6 @@ services:
       - OUTPUT_TOPIC=${OUTPUT_TOPIC}
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
     volumes:
-      - ./execution-results/stream-daq:/app/data
+      - ./execution-results:/app/data
     env_file:
       - .env
