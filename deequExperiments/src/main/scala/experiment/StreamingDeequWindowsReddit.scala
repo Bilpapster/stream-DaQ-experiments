@@ -1,25 +1,25 @@
 package experiment
- 
+
 import com.amazon.deequ.checks.{Check, CheckLevel}
 import com.amazon.deequ.constraints.ConstraintStatus
 import com.amazon.deequ.{VerificationResult, VerificationSuite}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
- 
+
 import java.sql.Timestamp
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
- 
+
 sealed trait WindowType
- 
+
 object WindowType {
   case object Tumbling extends WindowType
- 
+
   case object Sliding extends WindowType
- 
+
   case object Session extends WindowType
- 
+
   def fromString(s: String): WindowType = s.toLowerCase match {
     case "tumbling" => Tumbling
     case "sliding" => Sliding
@@ -27,9 +27,9 @@ object WindowType {
     case _ => throw new IllegalArgumentException(s"Invalid window type: $s")
   }
 }
- 
+
 object StreamingDeequWindowsReddit {
- 
+
   // Define case class for metrics including window information
   case class PerformanceMetrics(
     batchId: Long,
@@ -48,7 +48,7 @@ object StreamingDeequWindowsReddit {
     checkingTimeMs: Long,
     totalExecutionTimeMs: Long
 )
- 
+
   def createWindowedStream(
     df: DataFrame,
     windowType: WindowType,
@@ -56,32 +56,31 @@ object StreamingDeequWindowsReddit {
     slideDuration: Option[String],
     gapDuration: Option[String]
 ): DataFrame = {
-    windowType match {
+    val windowExpr = windowType match {
       case WindowType.Tumbling =>
-        df.withWatermark("created_utc", "0 seconds")
-          .groupBy(col("blast_id"), window(col("created_utc"), windowDuration))
-          .agg(collect_list(struct(df.columns.map(col): _*)).alias("records"))
- 
+        window(col("created_utc"), windowDuration)
+
       case WindowType.Sliding =>
         val slide = slideDuration.getOrElse(
           throw new IllegalArgumentException("Slide duration must be provided for sliding windows")
         )
-        df.withWatermark("created_utc", "0 seconds")
-          .groupBy(col("blast_id"), window(col("created_utc"), windowDuration, slide))
-          .agg(collect_list(struct(df.columns.map(col): _*)).alias("records"))
- 
+        window(col("created_utc"), windowDuration, slide)
+
       case WindowType.Session =>
         val gap = gapDuration.getOrElse(
           throw new IllegalArgumentException("Gap duration must be provided for session windows")
         )
-        df.withWatermark("created_utc", "0 seconds")
-          .groupBy(col("blast_id"), session_window(col("created_utc"), gap))
-          .agg(collect_list(struct(df.columns.map(col): _*)).alias("records"))
+        session_window(col("created_utc"), gap)
     }
+
+    // Add window information as columns instead of aggregating
+    df.withWatermark("created_utc", "0 seconds")
+      .withColumn("window", windowExpr)
+      .withColumn("window_start", col("window.start"))
+      .withColumn("window_end", col("window.end"))
   }
- 
   def main(args: Array[String]): Unit = {
- 
+
     // Read environment variables with defaults
     val kafkaBootstrapServers = sys.env.getOrElse("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     val kafkaInputTopic = sys.env.getOrElse("INPUT_TOPIC", "data_input")
@@ -92,7 +91,7 @@ object StreamingDeequWindowsReddit {
     val windowDuration = sys.env.getOrElse("WINDOW_DURATION", "10 seconds")
     val slideDuration = sys.env.getOrElse("SLIDE_DURATION", "5 seconds")
     val gapDuration = sys.env.getOrElse("GAP_DURATION", "5 seconds")
- 
+
  
     // Log the configurations
 //    println(s"Kafka Bootstrap Servers: $kafkaBootstrapServers")
@@ -109,16 +108,14 @@ object StreamingDeequWindowsReddit {
     val spark = SparkSession.builder()
       .appName("Streaming Deequ Example with Windowing")
       .getOrCreate()
- 
+
     // Set log level to WARN to reduce verbosity
     spark.sparkContext.setLogLevel("OFF")
- 
+
     // Import implicits for Encoder
     import spark.implicits._
- 
-    // Needed for .asJava
-    import scala.collection.JavaConverters._
- 
+
+
     // Define the schema
     val itemSchema = StructType(Array(
       StructField("created_utc", LongType, nullable = true),
@@ -147,18 +144,18 @@ object StreamingDeequWindowsReddit {
       StructField("blast_id", StringType, nullable = true),
       StructField("blast_start_time", StringType, nullable = true),
     ))
- 
+
     // Create an empty Dataset[MetricRecordWithWindow] to store metrics
     var metricsDF = spark.emptyDataset[PerformanceMetrics]
     metricsDF.cache()
- 
+
     // Parse WindowType from string
     val windowType = WindowType.fromString(windowTypeStr)
- 
+
     // Prepare optional durations
     val slideDurationOpt = if (slideDuration.nonEmpty) Some(slideDuration) else None
     val gapDurationOpt = if (gapDuration.nonEmpty) Some(gapDuration) else None
- 
+
     // Read streaming data from Kafka
     val kafkaDF = spark.readStream
       .format("kafka")
@@ -166,10 +163,10 @@ object StreamingDeequWindowsReddit {
       .option("subscribe", kafkaInputTopic)
       .option("startingOffsets", "latest")
       .load()
- 
+
     // Extract and parse the JSON messages
     val messagesDF = kafkaDF.selectExpr("CAST(value AS STRING) as json_str")
- 
+
     // Define a UDF to handle both string and UNIX timestamp inputs
     val parseEventTime = udf((eventTime: Any) => eventTime match {
       case s: String =>
@@ -181,14 +178,14 @@ object StreamingDeequWindowsReddit {
         new java.sql.Timestamp(l * 1000)
       case _ => null
     })
- 
+
     val parsedMessagesDF = messagesDF
       .withColumn("jsonData", from_json(col("json_str"), itemSchema))
       .select("jsonData.*")
       // If eventTime is a StringType, parse it to TimestampType
       .withColumn("created_utc", parseEventTime(col("created_utc")))
       .withColumn("retrieved_on", parseEventTime(col("retrieved_on")))
- 
+
     val windowedStream = createWindowedStream(
       parsedMessagesDF,
       windowType,
@@ -196,41 +193,50 @@ object StreamingDeequWindowsReddit {
       slideDurationOpt,
       gapDurationOpt
     )
- 
+
     // Process each windowed batch and apply Deequ checks
     val query = windowedStream.writeStream
       .foreachBatch { (batchDF: DataFrame, batchId: Long) =>
         val time = System.currentTimeMillis()
- 
+
         // Ensure the batch data is cached to prevent multiple computations
         batchDF.cache()
- 
+
         if (!batchDF.isEmpty) {
-          // Collect the windowed data
-          val windowedData = batchDF.collect()
+          // Get distinct windows - only collect window metadata, not the actual data!
+          val windowInfo = batchDF
+            .select("blast_id", "window_start", "window_end")
+            .distinct()
+            .collect()
+
           val startTime = System.currentTimeMillis()
           val dataRetrievalTime = startTime - time
+
           // Process each window separately
-          windowedData.foreach { row =>
+          windowInfo.foreach { row =>
             val blastId: String = row.getAs[String]("blast_id")
-            val window = row.getAs[Row]("window")
-            val windowStart = window.getAs[Timestamp]("start")
-            val windowEnd = window.getAs[Timestamp]("end")
-            val records = row.getAs[Seq[Row]]("records")
- 
-            // Convert records back to DataFrame
-            val windowDF = spark.createDataFrame(records.asJava, parsedMessagesDF.schema)
+            val windowStart: Timestamp = row.getAs[Timestamp]("window_start")
+            val windowEnd: Timestamp = row.getAs[Timestamp]("window_end")
+
+            // Filter for this specific window - data remains distributed
+            val windowDF = batchDF
+              .filter(col("blast_id") === blastId &&
+                col("window_start") === windowStart &&
+                col("window_end") === windowEnd)
+              .drop("window", "window_start", "window_end") // Remove window columns for Deequ
+
+            windowDF.show(10)
             val batchSize = windowDF.count()
- 
+
             val rowCount = windowDF.count()
-//            println(s"[Batch $batchId] -> Blast: $blastId | Window: [$windowStart to $windowEnd] " +
-//              s"| #Records: $rowCount")
- 
+            //            println(s"[Batch $batchId] -> Blast: $blastId | Window: [$windowStart to $windowEnd] " +
+            //              s"| #Records: $rowCount")
+
             if (batchSize > 0) {
               // Record the start time
               val windowingFinishTime = System.currentTimeMillis()
               val windowingTime = windowingFinishTime - time
- 
+
               // Define the data quality checks
               val check = Check(CheckLevel.Error, "Reddit checks")
                 .isComplete("id_")
@@ -238,30 +244,29 @@ object StreamingDeequWindowsReddit {
                 .hasMin("downs", _ >= 0)
                 .hasMean("controversiality", _ < 0.05)
                 .hasCompleteness("author", _ > 0.9)
- 
+
               val checkingStartTime = System.currentTimeMillis()
               val verificationResult: VerificationResult = VerificationSuite()
                 .onData(windowDF)
                 .addCheck(check)
                 .run()
- 
+
               // Record the end time
               val checkingEndTime = System.currentTimeMillis()
- 
- 
+
               val numFailedChecks = verificationResult.checkResults
                 .flatMap { case (_, checkResult) => checkResult.constraintResults }
                 .count {
                   _.status != ConstraintStatus.Success
                 }
- 
+
               // Calculate total execution time and time required only for data quality checks
               val checkingTime = checkingEndTime - checkingStartTime
               val totalExecutionTime = checkingEndTime - time
- 
+
               // Get current timestamp as a string
               val batchEndTime = System.currentTimeMillis()
- 
+
               // Create a MetricRecord
               val performanceMetrics = PerformanceMetrics(
                 batchId,
@@ -280,10 +285,10 @@ object StreamingDeequWindowsReddit {
                 checkingTime,
                 totalExecutionTime,
               )
- 
+
               // Convert MetricRecord to Dataset
               val metricDS = Seq(performanceMetrics).toDS()
- 
+
               // Next, produce metricDS to Kafka's output topic
               // We'll create a small DF of key/value columns
               val toKafkaDF = metricDS
@@ -291,7 +296,7 @@ object StreamingDeequWindowsReddit {
                   "CAST('deequ' AS STRING) as key", // or define your own key
                   "to_json(struct(*)) as value" // entire PerformanceMetrics as JSON
                 )
- 
+
               // Write to Kafka in batch mode (each foreachBatch is still micro-batch)
               toKafkaDF
                 .write
@@ -299,20 +304,20 @@ object StreamingDeequWindowsReddit {
                 .option("kafka.bootstrap.servers", kafkaBootstrapServers)
                 .option("topic", kafkaOutputTopic)
                 .save()
- 
+
               // Optionally, log to console
-              //println(s"Sent performance metrics of blast_id=$blastId to Kafka metrics topic.")
+              // println(s"Sent performance metrics of blast_id=$blastId to Kafka metrics topic.")
             }
           }
         }
- 
+
         // Unpersist the batch data
         batchDF.unpersist()
         ()
       }
       .option("truncate", "false")
       .start()
- 
+
     query.awaitTermination()
   }
 }
