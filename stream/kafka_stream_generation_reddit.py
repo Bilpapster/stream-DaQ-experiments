@@ -125,6 +125,8 @@ def produce_blasts_from_csv():
                     # Add metadata about the blast (optional)
                     row["blast_id"] = blast_id
                     row["blast_start_time"] = blast_start_time
+                    if row['interval'] == '':
+                        row['interval'] = 'missing'
 
                     # Send to Kafka
                     producer.send(KAFKA_INPUT_TOPIC, row)

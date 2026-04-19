@@ -6,6 +6,9 @@ run_experiment() {
 
   echo "Starting experiment: $description"
   
+  # Clean up potential remainders from previous experiments
+  docker compose down
+
   # Start Kafka and wait for it to be ready.
   docker compose up -d kafka &&
   sleep 5 &&
@@ -46,11 +49,18 @@ for cpus in "${cpu_limits[@]}"; do
          # Update window duration
          sed -i "s/^WINDOW_DURATION=.*/WINDOW_DURATION=$tumbling_window/" .env
 
-         # Run both service variations for the current configuration.
-         for service in "deequ-reddit" "daq"; do
-            description="Running: tumbling $tumbling_window with MEMORY_LIMIT=$memory and SPARK_NUM_CORES=$cpus, service: $service"
+         if test "$memory" = "16G"; then
+            # run two separate experiments, one for deequ and one for stream daq but not in parallel
+            for service in "deequ-reddit" "daq"; do
+               description="Running: sliding $duration/$slide window with MEMORY_LIMIT=$memory and SPARK_NUM_CORES=$cpus, service: $service"
+               run_experiment "$service" "$description"
+            done
+         else
+            # run stream daq and deequ in parallel, each one with equal resource allocation
+            service="deequ-reddit daq"
+            description="Running: sliding $duration/$slide window with MEMORY_LIMIT=$memory and SPARK_NUM_CORES=$cpus, service: $service"
             run_experiment "$service" "$description"
-         done
+         fi
       done
    done
 done
