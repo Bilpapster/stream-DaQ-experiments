@@ -4,7 +4,8 @@ Experimental Analyses for the Stream DaQ framework.
 ## TL;DR
 To reproduce the experimental analysis simply run the following command on a terminal (Linux):
 ```bash
-bash run-experiments.sh
+bash run-experiments-tumbling.sh  # for experiments with tumbling windows
+bash run-experiments-sliding.sh   # for experiments with sliding windows
 ```
 
 # Prerequisites
@@ -29,9 +30,10 @@ To fully reproduce the experimental analyses, you can download the [Reddit Comme
 REDDIT_CSV_FILE="datasets/<the_name_of_your_exported_csv_dataset>.csv"
 ```
 
-To accommodate users reproduce our experimental analyses without the need of downloading the whole (large) dataset file, we are providing a sample that contains 10K records as part of the existing source code in this repository. To reproduce the experimental analyses on this 10 subset, you need to do nothing more than executing the following command at the root directory of the repository:
+To accommodate users reproduce our experimental analyses without the need of downloading the whole (large) dataset file, we are providing a sample that contains 10K records as part of the existing source code in this repository. To reproduce the experimental analyses on this 10K subset, you need to do nothing more than executing the following command at the root directory of the repository:
 ```bash
-bash run-experiments.sh
+bash run-experiments-tumbling.sh  # for experiments with tumbling windows
+bash run-experiments-sliding.sh   # for experiments with sliding windows
 ```
 
 # Reproducing the experimental analyses
@@ -39,7 +41,7 @@ bash run-experiments.sh
 To reproduce our experimental analyses, please do the following steps:
 1. (Optionally) change window configurations from the `.env` file;
 2. (Optionally) change sub-stream lengths fom the `.env` file;
-3. From the root directory of the project, run `bash run-experiments.sh`;
+3. From the root directory of the project, run `bash run-experiments-tumbling.sh && bash run-experiments-sliding.sh`;
 4. See the live results in the constantly updated `execution_results/stream-daq/final_performance.csv` file.
 
 # Stop running experiments
