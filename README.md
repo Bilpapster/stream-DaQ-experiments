@@ -53,6 +53,10 @@ docker compose down
 
 Note that the experimental results in the `execution_results/stream-daq/final_performance.csv` file are persisted in the file system of your host machine (and not the Docker containers running the experiments). Running new experiments will simply append more lines at the end of the existing ones. The experimental setting configurations are logged in the csv folder for easy identification of experiments.
 
+# Visualizations
+
+To reproduce the plots present in the paper, please refer to the `Visualizations` directory of the current repository. The final CSV with execution data and the python notebook used to create the figures have been made available there.
+
 # Contact
 
 For any issues reproducing the experimental analyses feel free to contact us at {my_GitHub_username_without_bil} [at] csd.auth.gr.
